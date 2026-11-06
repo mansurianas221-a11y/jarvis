@@ -59,7 +59,25 @@ jobs:
           ls "$SDK/build-tools" || true
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        shell: bash
+        run: |
+          set -o pipefail
+          npm config set legacy-peer-deps true
+          npm config set audit false
+          npm config set fund false
+
+          if npm install 2>&1 | tee /tmp/npm.log; then
+            echo "npm install OK"
+            exit 0
+          fi
+
+          # Surface the real error as an annotation so it is readable without
+          # downloading the raw log.
+          ERR=$(grep -E "npm error|npm ERR!|ERESOLVE|ETARGET|E404|EBADENGINE" /tmp/npm.log | head -n 40 | tr '\n' '%0A')
+          echo "::error title=npm-install-failed::$ERR"
+          echo "----- full tail (80 lines) -----"
+          tail -n 80 /tmp/npm.log
+          exit 1
 
       - name: Toolchain info
         continue-on-error: true
@@ -79,9 +97,20 @@ jobs:
 
       - name: Build release APK
         working-directory: android
+        shell: bash
         env:
           GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false'
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          if ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log; then
+            echo "gradle OK"
+            exit 0
+          fi
+          ERR=$(grep -E "^e: |error:|FAILURE:|What went wrong|Caused by|> Task .* FAILED|A problem occurred" /tmp/gradle.log | head -n 40 | tr '\n' '%0A')
+          echo "::error title=gradle-failed::$ERR"
+          echo "----- gradle tail (120 lines) -----"
+          tail -n 120 /tmp/gradle.log
+          exit 1
 
       - name: Collect APK
         run: |
