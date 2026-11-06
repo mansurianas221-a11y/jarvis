@@ -15,7 +15,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned on purpose: "ubuntu-latest" is being migrated to 26.04 (Oct-Nov 2026)
+    # and that migration has broken several Android tooling actions.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -30,12 +32,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Android SDK packages
+      # NOTE: we deliberately do NOT use android-actions/setup-android.
+      # That action installs the "tools" package, which Google stopped
+      # serving in Sep 2026 -> "Failed to find package 'tools'" -> exit 1.
+      # The GitHub runner already ships the Android SDK; we only add the
+      # NDK version that React Native 0.76 expects.
+      - name: Android SDK packages (NDK 26.1.10909125)
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;26.1.10909125"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK" ]; then
+            echo "ANDROID_HOME is not set" >&2
+            exit 1
+          fi
+          echo "SDK root: $SDK"
+          SDKMGR="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "$SDKMGR" ]; then
+            echo "sdkmanager not found under $SDK" >&2
+            ls -la "$SDK" || true
+            exit 1
+          fi
+          echo "sdkmanager: $SDKMGR"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          yes | "$SDKMGR" --install "platforms;android-35" "build-tools;35.0.0" "ndk;26.1.10909125"
+          echo "--- installed ---"
+          ls "$SDK/ndk" || true
+          ls "$SDK/build-tools" || true
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -52,6 +73,9 @@ jobs:
         env:
           EXPO_NO_GIT_STATUS: '1'
         run: npx expo prebuild -p android --no-install
+
+      - name: Point Gradle at the SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
       - name: Build release APK
         working-directory: android
