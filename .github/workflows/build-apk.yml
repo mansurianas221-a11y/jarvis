@@ -58,6 +58,26 @@ jobs:
           ls "$SDK/ndk" || true
           ls "$SDK/build-tools" || true
 
+      - name: Verify dependency versions exist
+        shell: bash
+        run: |
+          set -o pipefail
+          node -e 'const p=require("./package.json");const d={...p.dependencies,...p.devDependencies};for(const k in d)console.log(k+"@"+d[k])' > /tmp/deps.txt
+          echo "checking $(wc -l < /tmp/deps.txt) dependencies..."
+          BAD=""
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            if ! npm view "$line" version > /dev/null 2>&1; then
+              echo "MISSING -> $line"
+              BAD="$BAD $line"
+            fi
+          done < /tmp/deps.txt
+          if [ -n "$BAD" ]; then
+            echo "::error title=bad-versions::Versions that do not exist on npm:$BAD"
+            exit 1
+          fi
+          echo "All dependency versions resolve OK."
+
       - name: Install dependencies
         shell: bash
         run: |
